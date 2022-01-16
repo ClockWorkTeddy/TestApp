@@ -13,11 +13,11 @@ namespace TestApp
 {
     public partial class MainForm : Form
     {
-        DataTable Groups = new DataTable();
-        DataTable Users = new DataTable();
-        DataTable UserGroup = new DataTable();
+        private DataTable Groups = new DataTable();
+        private DataTable Users = new DataTable();
+        private DataTable UserGroup = new DataTable();
 
-        string ConnStr = @"Data Source=(LocalDB)\MSSQLLocalDB;AttachDbFilename=C:\Users\vanka\source\repos\TestApp\TestApp\TestDB.mdf;Integrated Security=True";
+        private string ConnStr = @"Data Source=(LocalDB)\MSSQLLocalDB;AttachDbFilename=C:\Users\vanka\source\repos\TestApp\TestApp\TestDB.mdf;Integrated Security=True";
 
         public MainForm()
         {
@@ -26,8 +26,9 @@ namespace TestApp
             FillDTs();
             
             GetDataForCbGroups();
-            GetDataForDgGroups();
-            GetDataForDgUsers();
+
+            dgUsers.DataSource = Users;
+            dgGroups.DataSource = Groups;
         }
 
         private void GroupModify()
@@ -35,12 +36,12 @@ namespace TestApp
             if (Groups.Columns.Count < 3)
             {
                 DataColumn qnt = new DataColumn();
-                qnt.ColumnName = "Qnt";
+                qnt.ColumnName = "Сотрудников в группе";
                 Groups.Columns.Add(qnt);
             }
 
             foreach (DataRow row in Groups.Rows)
-                row["Qnt"] = GetQnt(row["ID_Group"]);
+                row["Сотрудников в группе"] = GetQnt(row["ID_Group"]);
         }
 
         private void UserModify()
@@ -62,41 +63,31 @@ namespace TestApp
 
             foreach (DataRow row in UserGroup.Rows)
                 if (row["ID_User"].Equals(id_user))
-                    result += (Groups.Select ("ID_Group = " + row["ID_Group"].ToString()) [0]["Description"].ToString() + ";");
+                {
+                    string query = "ID_Group = " + row["ID_Group"].ToString();
+                    string group_name = Groups.Select(query)[0]["Description"].ToString();
+                    result += (group_name + ";");
+                }
 
             return result;
-        }
-
-        private void GetDataForDgUsers()
-        {
-            dgUsers.DataSource = Users;
-        }
-
-        private void GetDataForDgGroups()
-        {
-            dgGroups.DataSource = Groups;
         }
 
         private int GetQnt(object id_group)
         {
-            int result = 0;
+            int qnt = 0;
 
             foreach (DataRow row in UserGroup.Rows)
                 if (row["ID_Group"].Equals(id_group))
-                    result++;
+                    qnt++;
 
-            return result;
+            return qnt;
         }
 
         private void FillDTs()
         {
-            string query_groups = "SELECT * FROM Groups";
-            string query_users = "SELECT * FROM Users";
-            string query_user_group = "SELECT * FROM UserGroup";
-
-            FillDT(Groups, query_groups);
-            FillDT(Users, query_users);
-            FillDT(UserGroup, query_user_group);
+            FillDT(Groups, "SELECT * FROM Groups");
+            FillDT(Users, "SELECT * FROM Users");
+            FillDT(UserGroup, "SELECT * FROM UserGroup");
 
             GroupModify();
             UserModify();
@@ -112,7 +103,6 @@ namespace TestApp
                 adapter.Fill(table);
                 adapter.Dispose();
             }
-
         }
 
         private void GetDataForCbGroups()
@@ -135,79 +125,89 @@ namespace TestApp
             }
         }
 
-        private void ExecuteDel(SqlDataAdapter adapter, SqlConnection connection)
+        private void ExecuteCmd(SqlCommand command)
         {
-
             //Странный способ, похож на какой-то костыль. Так делал чувак на Youtube
+            command.Connection.Open();
+            command.ExecuteNonQuery();
+            command.Connection.Close();
+        }
 
-            connection.Open();
-            adapter.DeleteCommand.ExecuteNonQuery();
-            connection.Close();
+        private void DeleteFromTable(int user_id, string table_name, SqlConnection connection)
+        {
+            //Адаптер в данной реализации выглядит каким-то лишним, но я начал делать с его помощью, в итоге он здесь остался
+            using (SqlDataAdapter adapter = new SqlDataAdapter())
+            {
+                SqlCommand del_cmd = new SqlCommand("DELETE FROM " + table_name + " WHERE ID_User = @user_id", connection);
+                del_cmd.Parameters.AddWithValue("@user_id", user_id);
+
+                adapter.DeleteCommand = del_cmd;
+                ExecuteCmd(adapter.DeleteCommand);
+            }
         }
 
         private void DeleteUser(int user_id)
         {
+            // Возможно, здесь должен быть другой способ вместо последовательного удаления из двух таблиц
             using (SqlConnection connection = new SqlConnection(ConnStr))
             {
-                SqlDataAdapter adapter = new SqlDataAdapter();
-
-                // PROBABLY, JOIN IS REQUIRED HERE
-                SqlCommand ug_del_cmd = new SqlCommand("DELETE FROM UserGroup WHERE ID_User = @user_id", connection);
-                ug_del_cmd.Parameters.Add("@user_id", SqlDbType.Int);
-                ug_del_cmd.Parameters["@user_id"].Value = user_id;
-                
-                adapter.DeleteCommand = ug_del_cmd;
-                ExecuteDel(adapter, connection);
-
-                SqlCommand u_del_cmd = new SqlCommand("DELETE FROM Users WHERE ID_User = @user_id", connection);
-                u_del_cmd.Parameters.Add("@user_id", SqlDbType.Int);
-                u_del_cmd.Parameters["@user_id"].Value = user_id;
-
-                adapter.DeleteCommand = u_del_cmd;
-                ExecuteDel(adapter, connection);
-
-                adapter.Dispose();
+                DeleteFromTable(user_id, "UserGroup", connection);
+                DeleteFromTable(user_id, "Users", connection);
             }
         }
 
-        private void ExecuteAdd(SqlDataAdapter adapter, SqlConnection connection)
+        private void AddToUsers(string fio, SqlConnection connection)
         {
+            using (SqlDataAdapter adapter = new SqlDataAdapter())
+            {
+                SqlCommand cmd = new SqlCommand("INSERT INTO Users (FIO)" + "VALUES(@FIO)", connection);
+                cmd.Parameters.AddWithValue("@FIO", fio);
 
-            //Странный способ, похож на какой-то костыль. Так делал чувак на Youtube
+                adapter.InsertCommand = cmd;
+                ExecuteCmd(adapter.InsertCommand);
+            }
 
-            connection.Open();
-            adapter.InsertCommand.ExecuteNonQuery();
-            connection.Close();
+            FillDT(Users, "SELECT * FROM Users");
+        }
+
+        private void AddToUserGroup(int user_id, int group_id, SqlConnection connection)
+        {
+            using (SqlDataAdapter adapter = new SqlDataAdapter())
+            {
+                SqlCommand cmd = new SqlCommand("INSERT INTO UserGroup (ID_User, ID_Group)"
+                                                    + "VALUES(@id_user, @id_group)", connection);
+                cmd.Parameters.AddWithValue("@id_user", user_id);
+                cmd.Parameters.AddWithValue("@id_group", group_id);
+
+                adapter.InsertCommand = cmd;
+                ExecuteCmd(adapter.InsertCommand);
+            }
+        }
+
+        private int CheckUserId(string fio)
+        {
+            foreach (DataRow row in Users.Select())
+                if (row["FIO"].ToString() == fio)
+                    return (int)row["ID_User"];
+
+            return -1;
         }
 
         private void AddUser(string fio, string group)
         {
             using (SqlConnection connection = new SqlConnection(ConnStr))
             {
-                SqlDataAdapter adapter = new SqlDataAdapter();
+                int user_id = CheckUserId(fio);
 
-                SqlCommand u_cmd = new SqlCommand("INSERT INTO Users (FIO)" + "VALUES(@FIO)", connection);
-                u_cmd.Parameters.Add("@FIO", SqlDbType.NVarChar);
-                u_cmd.Parameters["@FIO"].Value = fio;
-
-                adapter.InsertCommand = u_cmd;
-                ExecuteAdd(adapter, connection);
-                FillDT(Users, "SELECT * FROM Users");
+                if (user_id == -1)
+                {
+                    AddToUsers(fio, connection);
+                    user_id = GetId(fio, Users, "FIO", "ID_User");
+                }
 
                 int group_id = GetId(group, Groups, "Description", "ID_Group");
-                int user_id = GetId(fio, Users, "FIO", "ID_User");
-                
-                SqlCommand ug_cmd = new SqlCommand("INSERT INTO UserGroup (ID_User, ID_Group)"
-                                                    + "VALUES(@id_user, @id_group)", connection);
-                ug_cmd.Parameters.Add("@id_user", SqlDbType.Int);
-                ug_cmd.Parameters.Add("@id_group", SqlDbType.Int);
-                ug_cmd.Parameters["@id_user"].Value = user_id;
-                ug_cmd.Parameters["@id_group"].Value = group_id;
 
-                adapter.InsertCommand = ug_cmd;
-                ExecuteAdd(adapter, connection);
-
-                adapter.Dispose();
+                AddToUserGroup(user_id, group_id, connection);
             }
         }
 
