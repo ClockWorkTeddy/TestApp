@@ -127,7 +127,6 @@ namespace TestApp
 
         private void ExecuteCmd(SqlCommand command)
         {
-            //Странный способ, похож на какой-то костыль. Так делал чувак на Youtube
             command.Connection.Open();
             command.ExecuteNonQuery();
             command.Connection.Close();
